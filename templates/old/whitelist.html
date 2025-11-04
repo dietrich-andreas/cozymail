@@ -1,0 +1,77 @@
+<!-- whitelist.html -->
+{% extends "base.html" %}
+{% block content %}
+<h1 class="title">Whitelist</h1>
+
+<form method="post" class="mb-4">
+  <div class="field has-addons">
+    <div class="control is-expanded">
+      <input class="input" type="text" name="sender_address" placeholder="Adresse wie name@domain oder *@domain" required>
+    </div>
+    <div class="control">
+      <button type="submit" class="button is-success">➕ Hinzufügen</button>
+    </div>
+  </div>
+</form>
+
+<table class="table is-fullwidth">
+  <thead>
+    <tr>
+      <th>Adresse</th>
+      <th>Aktion</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for entry in whitelist %}
+    <tr>
+      <td>{{ entry.sender_address }}</td>
+      <td>
+        <form method="post" action="/whitelist/delete" style="display:inline">
+          <input type="hidden" name="id" value="{{ entry.id }}">
+          <button class="button is-danger is-small" onclick="return confirm('Eintrag wirklich löschen?')">❌ Löschen</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+
+  document.addEventListener("DOMContentLoaded", () => {
+    // Globales AJAX-Setup (401 → Login-Redirect), auch für künftige DataTables/AJAX-Features
+    if (window.$ && $.ajaxSetup) {
+      $.ajaxSetup({
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+        xhrFields: { withCredentials: true },
+        statusCode: {
+          401: (xhr) => {
+            try {
+              const p = JSON.parse(xhr.responseText || "{}");
+              window.location.href = p.redirect || "/login";
+            } catch {
+              window.location.href = "/login";
+            }
+          }
+        }
+      });
+
+      // Fallback für beliebige jQuery-AJAX-Fehler
+      $(document).on("ajaxError", (_evt, xhr) => {
+        if (xhr && xhr.status === 401) {
+          try {
+            const p = JSON.parse(xhr.responseText || "{}");
+            window.location.href = p.redirect || "/login";
+          } catch {
+            window.location.href = "/login";
+          }
+        }
+      });
+    }
+  });
+
+</script>
+{% endblock %}

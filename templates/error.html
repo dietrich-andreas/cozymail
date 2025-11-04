@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Fehler</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+  <style>
+    body { background: #f5f5f5; }
+    .error-box { max-width: 600px; margin: 10% auto; text-align: center; padding: 2rem; background: white; border-radius: 1rem; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    h1 { font-size: 2.2rem; margin-bottom: 1rem; }
+    p { color: #555; }
+  </style>
+</head>
+<body>
+  <div class="error-box">
+    <h1>😕 Ein Fehler ist aufgetreten</h1>
+    <p>{{ message or 'Es ist ein unerwarteter Fehler aufgetreten. Bitte versuche es später erneut.' }}</p>
+    <p class="mt-4"><a href="/" class="button is-link is-light">Zurück zur Startseite</a></p>
+  </div>
+</body>
+</html>

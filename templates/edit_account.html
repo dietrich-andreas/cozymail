@@ -1,0 +1,59 @@
+<!-- edit_account.html -->
+{% extends "base.html" %}
+{% set title = "Konto bearbeiten" %}
+{% block content %}
+<h1 class="title">✏️ Mailkonto bearbeiten</h1>
+<p class="subtitle">Mailadresse: <strong>{{ account.email }}</strong></p>
+
+<form method="post">
+  <div class="columns">
+    <div class="column">
+      <label class="label">IMAP-Benutzername</label>
+      <input class="input" type="text" name="username" value="{{ account.username }}" required>
+    </div>
+    <div class="column">
+      <label class="label">IMAP-Server</label>
+      <input class="input" type="text" name="server" value="{{ account.server }}" required>
+    </div>
+  </div>
+
+  <div class="columns">
+    <div class="column">
+      <label class="label">Neues IMAP-Passwort (leer lassen, wenn unverändert)</label>
+      <input class="input" type="password" name="password">
+    </div>
+    <div class="column">
+      <label class="label">Junk-Ordner</label>
+      <input class="input" type="text" name="junk_folder" value="{{ account.junk_folder }}" required>
+    </div>
+  </div>
+
+  <div class="columns">
+    <div class="column is-3">
+      <label class="label">X-Spam-Level (1–5)</label>
+      <input class="input" type="number" name="x_spam_level" min="1" max="5" value="{{ account.x_spam_level or 3 }}" required>
+    </div>
+    <div class="column is-3 is-flex is-align-items-center" style="height: 100%;">
+      <div style="margin-top: 2.4em;">
+        <label class="checkbox">
+          <input type="checkbox" name="spam_filter_active" {% if account.spam_filter_active %}checked{% endif %}>
+          Spamfilter aktiv
+        </label>
+      </div>
+    </div>
+    <div class="column">
+      <label class="label">Papierkorb-Ordner</label>
+      <input class="input" type="text" name="trash_folder" value="{{ account.trash_folder or 'INBOX.Trash' }}" required>
+    </div>
+  </div>
+
+  <div class="field is-grouped">
+    <div class="control">
+      <button class="button is-primary">💾 Änderungen speichern</button>
+    </div>
+    <div class="control">
+      <a href="/accounts" class="button is-light">Zurück</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

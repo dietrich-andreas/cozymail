@@ -1,0 +1,201 @@
+<!-- accounts.html -->
+{% extends "base.html" %}
+{% set title = "Mailkonten verwalten" %}
+{% block content %}
+<h1 class="title">📧 Mailkonten verwalten</h1>
+<p class="subtitle">Angemeldet als <strong>{{ session.username }}</strong></p>
+
+<h2 class="subtitle">Bestehende Konten</h2>
+<table class="table is-fullwidth" id="accounts-table">
+  <thead>
+    <tr>
+      <th>Benutzername</th>
+      <th>IMAP-Server</th>
+      <th>Papierkorb</th>
+      <th>Junk-Ordner</th>
+      <th>X-Spam</th>
+      <th>Aktion</th>
+      <th>Sortieren</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for acc in accounts %}
+    <tr data-id="{{ acc.id }}">
+      <td>{{ acc.username }}</td>
+      <td>{{ acc.server }}</td>
+      <td>{{ acc.trash_folder or 'INBOX.Trash' }}</td>
+      <td>{{ acc.junk_folder }}</td>
+      <td>{{ acc.x_spam_level or 3 }}</td>
+      <td>
+        <a href="/account/{{ acc.id }}/edit" class="button is-small is-rounded" title="Bearbeiten">✏️</a>
+        <form method="post" action="/account/{{ acc.id }}/delete" style="display:inline" onsubmit="return confirm('Konto wirklich löschen?');">
+          <button class="button is-small is-rounded" title="Löschen">🗑️</button>
+        </form>
+      </td>
+      <td class="sort-handle" style="cursor: grab; text-align: center;">
+        <span style="font-size: 1.2em;">☰</span>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if num_pages > 1 %}
+<nav class="pagination is-rounded mt-4" role="navigation" aria-label="pagination">
+  <a href="{{ url_for('accounts', page=page-1, per_page=per_page) }}" class="pagination-previous" {% if page <= 1 %}disabled{% endif %}>Zurück</a>
+  <a href="{{ url_for('accounts', page=page+1, per_page=per_page) }}" class="pagination-next" {% if page >= num_pages %}disabled{% endif %}>Weiter</a>
+  <ul class="pagination-list">
+    {% if page > 2 %}
+      <li><a href="{{ url_for('accounts', page=1, per_page=per_page) }}" class="pagination-link">1</a></li>
+      {% if page > 3 %}
+        <li><span class="pagination-ellipsis">&hellip;</span></li>
+      {% endif %}
+    {% endif %}
+    {% for p in range(max(1, page-1), min(num_pages+1, page+2)) %}
+      <li><a href="{{ url_for('accounts', page=p, per_page=per_page) }}" class="pagination-link {% if p == page %}is-current{% endif %}">{{ p }}</a></li>
+    {% endfor %}
+    {% if page < num_pages - 1 %}
+      {% if page < num_pages - 2 %}
+        <li><span class="pagination-ellipsis">&hellip;</span></li>
+      {% endif %}
+      <li><a href="{{ url_for('accounts', page=num_pages, per_page=per_page) }}" class="pagination-link">{{ num_pages }}</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+{% if total > 10 %}
+<form method="get" id="per-page-form">
+  <div class="field mt-2">
+    <label class="label">Anzahl pro Seite</label>
+    <div class="control">
+      <div class="select">
+        <select name="per_page" onchange="document.getElementById('per-page-form').submit()">
+          <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+          <option value="25" {% if per_page == 25 %}selected{% endif %}>25</option>
+          <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+          <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <input type="hidden" name="page" value="{{ page }}">
+</form>
+{% endif %}
+
+<hr>
+<h2 class="subtitle">Neues Konto hinzufügen</h2>
+<form method="post">
+  <div class="columns">
+    <div class="column">
+      <label class="label">E-Mail</label>
+      <input class="input" type="email" name="email" required>
+    </div>
+    <div class="column">
+      <label class="label">IMAP-Benutzername</label>
+      <input class="input" type="text" name="username" required>
+    </div>
+  </div>
+  <div class="columns">
+    <div class="column">
+      <label class="label">IMAP-Passwort</label>
+      <input class="input" type="password" name="password" required>
+    </div>
+    <div class="column">
+      <label class="label">IMAP-Server</label>
+      <input class="input" type="text" name="server" required>
+    </div>
+    <div class="column">
+      <label class="label">Papierkorb-Ordner</label>
+      <input class="input" type="text" name="trash_folder" value="INBOX.Trash" required>
+    </div>
+    <div class="column">
+      <label class="label">Junk-Ordner</label>
+      <input class="input" type="text" name="junk_folder" value="INBOX.Junk" required>
+    </div>
+    <div class="column">
+      <label class="checkbox" style="margin-top: 2.4em;">
+        <input type="checkbox" name="spam_filter_active" checked> Spamfilter aktiv
+      </label>
+    </div>
+  </div>
+  <div class="field">
+    <div class="control">
+      <button class="button is-primary">➕ Konto hinzufügen</button>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/Sortable.min.js"></script>
+<script>
+
+  const table = document.querySelector("#accounts-table tbody");
+  document.addEventListener("DOMContentLoaded", () => {
+    // 401-Redirect für AJAX global (falls jQuery vorhanden)
+    if (window.$ && $.ajaxSetup) {
+      $.ajaxSetup({
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+        xhrFields: { withCredentials: true },
+        statusCode: {
+          401: (xhr) => {
+            try {
+              const p = JSON.parse(xhr.responseText || "{}");
+              window.location.href = p.redirect || "/login";
+            } catch {
+              window.location.href = "/login";
+            }
+          }
+        }
+      });
+
+      $(document).on("ajaxError", (_evt, xhr) => {
+        if (xhr && xhr.status === 401) {
+          try {
+            const p = JSON.parse(xhr.responseText || "{}");
+            window.location.href = p.redirect || "/login";
+          } catch {
+            window.location.href = "/login";
+          }
+        }
+      });
+    }
+
+    // Sortable + Fetch mit 401-Handling
+    const tbody = document.querySelector("#accounts-table tbody");
+    if (!tbody) return;
+
+    Sortable.create(tbody, {
+      animation: 150,
+      handle: ".sort-handle",
+      onEnd: async () => {
+        const ids = Array.from(tbody.children).map(row => row.dataset.id).filter(Boolean);
+        try {
+          const res = await fetch("/accounts/reorder", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            credentials: "include",
+            body: JSON.stringify({ order: ids })
+          });
+          if (res.status === 401) {
+            const p = await res.json().catch(() => ({}));
+            window.location.href = p.redirect || "/login";
+            return;
+          }
+          if (!res.ok) {
+            console.error("Reorder fehlgeschlagen:", res.status, await res.text().catch(() => ""));
+          }
+        } catch (err) {
+          console.error("Netzwerkfehler beim Reorder:", err);
+        }
+      }
+    });
+  });
+
+
+</script>
+{% endblock %}

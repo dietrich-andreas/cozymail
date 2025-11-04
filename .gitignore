@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyo
+
+# Virtualenv / Build
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+
+# Logs & Runtime
+logs/
+*.log
+*.pid
+*.sock
+
+# Databases & Models
+*.db
+*_*.db
+mailfilter.db
+_mailfilter.db
+models/
+trainer.log
+spam_filter.log
+
+# Secrets
+secrets/
+fernet.key
+.env
+.env.*
+email_config.ini
+instance/
+*.pem
+*.key
+
+# Node/Frontend libs (falls mal genutzt)
+node_modules/
+*.map
+
+# OS crap
+.DS_Store
+Thumbs.db

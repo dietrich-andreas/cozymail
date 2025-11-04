@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% set title = "Logs" %}
+{% block content %}
+<h1 class="title">📁 Mailfilter Logs</h1>
+
+<!-- Kontoauswahl -->
+<nav class="panel is-primary is-flex is-flex-wrap-wrap mb-4">
+  <p class="panel-heading is-flex-grow-1">Postfächer</p>
+  <div class="panel-block is-flex-wrap-wrap" style="flex: 1 1 100%;">
+    {% for account in accounts %}
+      <a class="button is-small m-1{% if account.username == selected_account %} is-link is-light{% endif %}" href="?account={{ account.username }}">
+        📬 {{ account.username }}
+      </a>
+    {% endfor %}
+  </div>
+</nav>
+
+<!-- Tab-Auswahl -->
+<div class="tabs is-boxed">
+  <ul>
+    <li class="is-active" id="log-tab"><a onclick="showTab('log')">Protokoll</a></li>
+    <li id="error-tab"><a onclick="showTab('error')">Fehler</a></li>
+    <li id="train-tab"><a onclick="showTab('train')">Training</a></li>
+    <li id="system-tab"><a onclick="showTab('system')">System</a></li>
+    <li id="spam-tab"><a onclick="showTab('spam')">Spamfilter</a></li>
+  </ul>
+</div>
+
+<!-- Tabelle -->
+<table id="log-table" class="table is-striped is-hoverable is-fullwidth mt-3">
+  <thead>
+    <tr>
+      <th>Zeit</th>
+      <th>Typ</th>
+      <th>Meldung</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<!-- Loganzeige -->
+<p id="log-path" class="has-text-grey is-size-7 mt-2">
+  📄 Datei: <span id="log-path-content">{{ current_log_path }}</span>
+</p>
+{% endblock %}
+
+{% block scripts %}
+
+<script>
+  let currentTab = 'log';
+  const logPaths = {{ log_paths | tojson }};
+  const selectedAccount = "{{ selected_account }}";
+  let logTable = null;
+
+  function getUrlParams() {
+    return "?account=" + encodeURIComponent(selectedAccount) + "&type=" + currentTab;
+  }
+
+  function getColumnsForType(type) {
+    if (type === 'spam') {
+      return [
+        { data: 'timestamp', title: 'Zeitstempel' },
+        { data: 'received', title: 'Empfangen' },
+        { data: 'from', title: 'Absender' },
+        { data: 'subject', title: 'Betreff' },
+        { data: 'score', title: 'Score' },
+        { data: 'label', title: 'Label' }
+      ];
+    } else {
+      return [
+        { data: 'timestamp', title: 'Zeit' },
+        { 
+          data: 'level', title: 'Typ',
+          render: function(data) {
+            if (!data || typeof data !== "string") return "";
+            let cls = '';
+            if (data === 'ERROR') cls = 'has-text-danger';
+            else if (data === 'WARN' || data === 'WARNING') cls = 'has-text-warning';
+            else if (data === 'INFO') cls = 'has-text-info';
+            else if (data === 'DEBUG') cls = 'has-text-grey';
+            return `<span class="${cls}">${data}</span>`;
+          }
+        },
+        { data: 'message', title: 'Meldung' }
+      ];
+    }
+  }
+
+  function showTab(tab) {
+    currentTab = tab;
+    ['log', 'error', 'train', 'system', 'spam'].forEach(id => {
+      document.getElementById(id + '-tab').classList.remove('is-active');
+    });
+    document.getElementById(tab + '-tab').classList.add('is-active');
+
+    const ajaxUrl = "/logdata" + getUrlParams();
+    const columns = getColumnsForType(tab);
+
+    if (logTable) {
+      logTable.destroy();
+      $('#log-table').empty();  // sonst doppelte Spalten
+    }
+
+    logTable = initDataTable("#log-table", ajaxUrl, columns, {
+      order: [[0, 'desc']]
+    });
+    document.getElementById("log-path-content").textContent = logPaths[tab] || "";
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    showTab(currentTab);
+  });
+</script>
+{% endblock %}

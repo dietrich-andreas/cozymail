@@ -1,0 +1,25 @@
+<!-- login.html -->
+{% extends "base.html" %}
+{% set title = "Login" %}
+{% block content %}
+<h1 class="title">🔐 Spamfilter Login</h1>
+<form method="post">
+  <div class="field">
+    <label class="label">Benutzername</label>
+    <div class="control">
+      <input class="input" type="text" name="username" placeholder="Benutzername" required autofocus>
+    </div>
+  </div>
+  <div class="field">
+    <label class="label">Passwort</label>
+    <div class="control">
+      <input class="input" type="password" name="password" placeholder="Passwort" required>
+    </div>
+  </div>
+  <div class="field">
+    <div class="control">
+      <button class="button is-primary">Login</button>
+    </div>
+  </div>
+</form>
+{% endblock %}

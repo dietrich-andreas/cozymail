@@ -1,0 +1,84 @@
+<!-- base.html -->
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ title | default("Mailfilter") }}</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='libs/datatables/jquery.dataTables.min.css') }}">
+    <link href="/static/css/custom.css" rel="stylesheet" type="text/css" media="screen">
+    {% block head %}{% endblock %}
+  </head>
+
+  <body>
+    <section class="section">
+      <div class="container">
+        {% if session.logged_in %}
+        <nav class="level mb-4">
+          <div class="level-left">
+            <div class="buttons">
+              <a href="/" class="button {% if title == 'Posteingang' %}is-link{% else %}is-light{% endif %}">📥 Posteingang</a>
+              <a href="/log" class="button {% if title == 'Logs' %}is-link{% else %}is-light{% endif %}">📑 Logs</a>
+              <a href="/filters" class="button {% if title == 'Filter' %}is-link{% else %}is-light{% endif %}">🧪 Filter</a>
+              <a href="/whitelist" class="button {% if title == 'Whitelist' %}is-link{% else %}is-light{% endif %}">✅ Whitelist</a>
+              <a href="/accounts" class="button {% if title == 'Mailkonten verwalten' %}is-link{% else %}is-light{% endif %}">📧 Mailkonten</a>
+            </div>
+          </div>
+          <div class="level-right">
+            <a class="button is-light" href="/logout">🔓 Logout</a>
+          </div>
+        </nav>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+      </div>
+    </section>
+
+    <!-- jQuery und DataTables zuerst laden -->
+    <script src="{{ url_for('static', filename='js/jquery.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='libs/datatables/jquery.dataTables.min.js') }}"></script>
+    <script>
+      const DATATABLES_LANG_URL = "{{ url_for('static', filename='libs/datatables/de_DE.json') }}";
+    </script>
+
+    <!-- Eigene Helferfunktionen -->
+    <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
+
+    <!-- Gemeinsames 401-/Session-Handling -->
+    <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      if (window.$ && $.ajaxSetup) {
+        $.ajaxSetup({
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          xhrFields: { withCredentials: true },
+          statusCode: {
+            401: (xhr) => {
+              try {
+                const p = JSON.parse(xhr.responseText || "{}");
+                window.location.href = p.redirect || "/login";
+              } catch {
+                window.location.href = "/login";
+              }
+            }
+          }
+        });
+
+        // Globaler Fallback für unerwartete 401
+        $(document).on("ajaxError", (_evt, xhr) => {
+          if (xhr && xhr.status === 401) {
+            try {
+              const p = JSON.parse(xhr.responseText || "{}");
+              window.location.href = p.redirect || "/login";
+            } catch {
+              window.location.href = "/login";
+            }
+          }
+        });
+      }
+    });
+    </script>
+
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

@@ -1,0 +1,117 @@
+<!-- filters.html -->
+{% extends "base.html" %}
+{% set title = "Filter" %}
+{% block content %}
+<h1 class="title">🧪 E-Mail-Filter</h1>
+<p class="subtitle">Filterregeln für eingehende Mails definieren</p>
+
+<!-- Tabs für Accounts -->
+<div class="tabs is-boxed">
+  <ul>
+    {% for acc in accounts %}
+      <li class="{% if acc.id == active_account %}is-active{% endif %}">
+        <a href="?account={{ acc.id }}">{{ acc.username }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<!-- Filterformular -->
+<form method="post">
+  <div class="columns is-vcentered">
+    <div class="column is-2">
+      <div class="select is-fullwidth">
+        <select name="field">
+          <option value="from">Von</option>
+          <option value="to">An</option>
+          <option value="subject">Betreff</option>
+        </select>
+      </div>
+    </div>
+    <div class="column is-2">
+      <div class="select is-fullwidth">
+        <select name="mode">
+          <option value="exact">ist genau</option>
+          <option value="contains">enthält</option>
+          <option value="startswith">beginnt mit</option>
+          <option value="endswith">endet mit</option>
+          <option value="regex">RegEx</option>
+        </select>
+      </div>
+    </div>
+    <div class="column">
+      <input class="input" type="text" name="value" placeholder="Wert eingeben" required>
+    </div>
+    <div class="column is-narrow">
+      <button class="button is-primary" type="submit">➕ Hinzufügen</button>
+    </div>
+  </div>
+
+  <div class="columns is-vcentered">
+    <div class="column is-3">
+      <label class="label">Zielordner</label>
+      <input class="input" type="text" name="target_folder" value="INBOX.">
+    </div>
+    <div class="column is-2">
+      <label class="checkbox mt-5">
+        <input type="checkbox" name="is_read"> Als gelesen markieren
+      </label>
+    </div>
+    <div class="column is-2">
+      <label class="checkbox mt-5">
+        <input type="checkbox" name="active" checked> Aktiv
+      </label>
+    </div>
+  </div>
+</form>
+
+<hr>
+
+<!-- Filterliste -->
+<h2 class="subtitle">Aktive Filter für dieses Konto</h2>
+
+{% if filters %}
+<table class="table is-fullwidth is-striped">
+  <thead>
+    <tr>
+      <th>Feld</th>
+      <th>Modus</th>
+      <th>Wert</th>
+      <th>Zielordner</th>
+      <th>Gelesen</th>
+      <th>Status</th>
+      <th>Aktion</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in filters %}
+    <tr>
+      <td>{% if f.field == "from" %}Von{% elif f.field == "to" %}An{% else %}Betreff{% endif %}</td>
+      <td>
+        {% if f.mode == "exact" %}ist genau
+        {% elif f.mode == "contains" %}enthält
+        {% elif f.mode == "startswith" %}beginnt mit
+        {% elif f.mode == "endswith" %}endet mit
+        {% elif f.mode == "regex" %}RegEx
+        {% else %}{{ f.mode }}
+        {% endif %}
+      </td>
+      <td>{{ f.value }}</td>
+      <td>{{ f.target_folder or "INBOX." }}</td>
+      <td>{{ "✅" if f.is_read else "❌" }}</td>
+      <td>{{ "🟢 Aktiv" if f.active else "⚪️ Inaktiv" }}</td>
+      <td>
+        <form method="post" action="/filters/delete">
+          <input type="hidden" name="filter_id" value="{{ f.id }}">
+          <input type="hidden" name="account_id" value="{{ active_account }}">
+          <button class="button is-small is-danger is-light" type="submit">🗑️ Löschen</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>Keine Filter für dieses Konto vorhanden.</em></p>
+{% endif %}
+{% endblock %}
