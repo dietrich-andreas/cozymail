@@ -1,0 +1,13 @@
+# Verhindert, dass sensible oder dynamische Inhalte in ZIP/Tar-Exports landen
+logs/            export-ignore
+models/          export-ignore
+secrets/         export-ignore
+
+*.db             export-ignore
+*.log            export-ignore
+
+email_config.ini export-ignore
+info.md          export-ignore
+
+.env             export-ignore
+.env.*           export-ignore
