@@ -32,6 +32,7 @@ spam_filter.log
 secrets/
 fernet.key
 info.md
+git-cheatsheet.md
 .env
 .env.*
 email_config.ini
