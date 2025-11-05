@@ -329,7 +329,22 @@ def process_flagged_mails(account):
                 password = decrypt(account["password_enc"])
                 with MailBox(account["server"]).login(account["username"], password) as mailbox:
                     mailbox.folder.set("INBOX")
-                    mailbox.flag(uid, 'Junk', True)
+
+                    # \Seen nur setzen, wenn in der DB seen == 1 ist
+                    try:
+                        if int(row["seen"]) == 1:
+                            mailbox.flag(uid, ['\\Seen'], True)
+                    except Exception as e:
+                        write_error_log(account["user_id"], account["username"],
+                                        f"Fehler beim Setzen von \\Seen (UID={uid}): {e}")
+
+                    # Junk-Flag (nicht standardisiert) best-effort
+                    try:
+                        mailbox.flag(uid, 'Junk', True)
+                    except Exception:
+                        pass  # falls der Server 'Junk' nicht kennt
+
+                    # Move in den Junk-Ordner
                     mailbox.move(uid, account["junk_folder"])
             except Exception as e:
                 write_error_log(account["user_id"], account["username"], f"Fehler beim Verschieben UID={uid}: {e}")

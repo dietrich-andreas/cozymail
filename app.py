@@ -27,11 +27,10 @@ from email.header import decode_header
 from email.utils import parseaddr
 from functools import wraps
 
-from flask import (Flask, abort, current_app, flash, jsonify, redirect,
+from flask import (Flask, current_app, flash, jsonify, redirect,
                    render_template, render_template_string, request,
                    session, url_for)
 from flask_socketio import SocketIO
-from functools import wraps
 from imap_tools import AND, MailBox, MailMessageFlags
 from sklearn.naive_bayes import MultinomialNB
 
@@ -49,13 +48,6 @@ from core.logger import (get_error_logger, setup_main_logger,
 #          App Setup             #
 ##################################
 app = Flask(__name__)
-app.permanent_session_lifetime = timedelta(hours=8)
-
-@app.before_request
-def _keep_session_fresh():
-    # Rolling Session: verlängert die Session bei jedem Request
-    session.permanent = True
-
 app.secret_key = '1=!R+)B?op7+BE[v9![Nb.a-E'
 socketio = SocketIO(app, async_mode="eventlet")
 
@@ -67,47 +59,28 @@ error_logger = get_error_logger()
 DEBUG = True
 
 ##################################
-#         AJAX-Erkennung         #
-##################################
-def _is_ajax() -> bool:
-    try:
-        return (
-            request.headers.get("X-Requested-With") == "XMLHttpRequest"
-            or request.path.startswith("/api/")
-            or request.accept_mimetypes["application/json"] >= request.accept_mimetypes["text/html"]
-        )
-    except Exception:
-        return False
-
-##################################
 #          Decorators            #
 ##################################
 def db_handler(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         if not session.get('logged_in'):
-            if _is_ajax():
-                return jsonify({
-                    "status": "unauthorized",
-                    "message": "Session abgelaufen",
-                    "redirect": url_for('login')
-                }), 401
             return redirect(url_for('login'))
-
+        
         # Basisparameter
         params = {
             'user_id': session.get("user_id"),
             'conn': None,
             'cursor': None
         }
-
+        
+        # Zusätzliche Parameter dynamisch prüfen
         sig = inspect.signature(func)
         if 'account' in sig.parameters:
             params['account'] = request.args.get("account")
         if 'logtype' in sig.parameters:
             params['logtype'] = request.args.get("type", "log")
-
-        from core.database import get_db_connection
+        
         with get_db_connection() as conn:
             params['conn'] = conn
             params['cursor'] = conn.cursor()
@@ -115,11 +88,7 @@ def db_handler(func):
                 return func(*args, **{**kwargs, **params})
             except Exception as e:
                 conn.rollback()
-                # vorhandenen Logger verwenden
-                try:
-                    error_logger.error(f"Error in {func.__name__}: {str(e)}")
-                except Exception:
-                    pass
+                error_logger.error(f"Error in {func.__name__}: {str(e)}")
                 raise
     return wrapper
 
@@ -127,45 +96,9 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get('logged_in'):
-            if _is_ajax():
-                return jsonify({
-                    "status": "unauthorized",
-                    "message": "Session abgelaufen",
-                    "redirect": url_for('login')
-                }), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
-
-##################################
-#      Globale Error-Handler     #
-##################################
-@app.errorhandler(401)
-def _unauthorized(e):
-    if _is_ajax():
-        return jsonify({
-            "status": "unauthorized",
-            "message": "Session abgelaufen",
-            "redirect": url_for('login')
-        }), 401
-    return redirect(url_for('login'))
-
-@app.errorhandler(500)
-def _internal_error(e):
-    try:
-        current_app.logger.exception("Unhandled 500: %s", e)
-    except Exception:
-        pass
-    if _is_ajax():
-        return jsonify({
-            "status": "error",
-            "message": "Interner Serverfehler"
-        }), 500
-    # Falls du kein templates/error.html hast, kannst du hier auf eine einfache Textantwort wechseln
-    try:
-        return render_template("error.html", message="Interner Serverfehler"), 500
-    except Exception:
-        return "Interner Serverfehler", 500
 
 ##################################
 #          Web Pages             #
@@ -639,105 +572,6 @@ def mark_read():
 
     return redirect(url_for("index", account=account_id))
 
-@app.route("/mark_spam", methods=["POST"])
-@login_required
-def mark_spam():
-    user_id = session.get("user_id")
-    uid = request.form.get("uid")
-    account_id = request.form.get("account_id")
-    mark_read = str(request.form.get("mark_read", "")).lower() in {"1", "true", "on", "yes"}
-
-    if not uid or not account_id:
-        return redirect(url_for("index"))
-
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM accounts WHERE id = ? AND user_id = ?", (account_id, user_id))
-        acc = cursor.fetchone()
-
-    if not acc:
-        return redirect(url_for("index"))
-
-    try:
-        password = decrypt(acc["password_enc"])
-    except Exception:
-        return "Fehler beim Entschlüsseln des Passworts", 500
-
-    model_user_dir = os.path.join(MODEL_BASE, session["username"])
-    os.makedirs(model_user_dir, exist_ok=True)
-    model_path = os.path.join(model_user_dir, "spam_model.pkl")
-    vectorizer_path = os.path.join(model_user_dir, "spam_vectorizer.pkl")
-
-    logger = get_error_logger()
-
-    try:
-        with MailBox(acc['server']).login(acc['username'], password) as mailbox:
-            mailbox.folder.set("INBOX")
-
-            # Mail anhand der UID holen, ohne sie als gelesen zu markieren
-            msg = next(mailbox.fetch(AND(uid=uid), mark_seen=true), None)
-
-            if msg:
-                text = (msg.subject or '') + '\n' + (msg.text or '')
-
-                uid_str = str(uid)
-
-                # 1) Gegen-Flags entfernen (robust)
-                for flags_to_clear in (['NonJunk'], ['$NotJunk'], ['nonjunk'], ['Junk'], ['$Junk']):
-                    try:
-                        mailbox.flag([uid_str], flags_to_clear, False)
-                    except Exception:
-                        pass
-
-                # 3) Junk-Flag setzen (mehrere Varianten für Server-Kompatibilität)
-                for junk_flag in (['Junk'], ['$Junk']):
-                    try:
-                        mailbox.flag([uid_str], junk_flag, True)
-                        break
-                    except Exception:
-                        continue
-
-                # 4) Mail in Junk-Ordner verschieben
-                try:
-                    mailbox.move([uid_str], acc['junk_folder'])
-                except Exception:
-                    # Fallback: einzelne UID ohne Liste
-                    mailbox.move(uid_str, acc['junk_folder'])
-
-                # 5) Training durchführen (unverändert)
-                if os.path.exists(model_path) and os.path.exists(vectorizer_path):
-                    model = joblib.load(model_path)
-                    vectorizer = joblib.load(vectorizer_path)
-                    X_new = vectorizer.transform([text])
-
-                    prev_counts = list(model.class_count_) if hasattr(model, "class_count_") else [0, 0]
-                    model.partial_fit(X_new, [1], classes=[0, 1])
-                    new_counts = list(model.class_count_)
-
-                    joblib.dump(model, model_path)
-                    joblib.dump(vectorizer, vectorizer_path)
-
-                    log_line = (
-                        f"✅ Manuelles Training (Spam): UID={uid}, Betreff={msg.subject} – "
-                        f"Klassen: {model.classes_.tolist()}, "
-                        f"Counts vorher: {prev_counts}, nachher: {new_counts}, "
-                        f"Seen={'1' if mark_read else '0'}"
-                    )
-                    write_train_log(user_id, acc['username'], log_line)
-                else:
-                    write_train_log(
-                        user_id,
-                        acc['username'],
-                        f"⚠️ Kein Modell vorhanden – Mail verschoben, aber nicht trainiert: UID={uid}, Betreff={msg.subject}"
-                    )
-
-    except Exception as e:
-        logger.error(f"Fehler beim manuellen Training UID={uid}: {e}")
-        write_error_log(user_id, acc["username"], f"Fehler beim Verschieben der Mail UID={uid}: {e}")
-        write_train_log(user_id, acc["username"], f"❌ Fehler beim manuellen Training UID={uid}: {e}")
-
-    return redirect(url_for("index", account=account_id))
-
 @app.route("/notify", methods=["POST"])
 def notify():
     try:
@@ -868,7 +702,6 @@ def api_delete_mail(cursor, conn, user_id):
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        # NEU: nur flagged_action setzen
         cursor.execute("""
             UPDATE mails
             SET flagged_action = 'deleted'
@@ -983,48 +816,36 @@ def api_mark_read(cursor, conn, user_id):
 def api_mark_spam(cursor, conn, user_id):
     data = request.get_json() or {}
     mail_id = data.get("id")
-    # NEU: optionales Flag aus JSON (true/false); Standard False = ungelesen lassen
-    mark_read = bool(data.get("mark_read", False))
+    seen_param = bool(data.get("seen", True))  # Default: True
 
     if not mail_id:
         return jsonify({"status": "error", "message": "Mail-ID fehlt"}), 400
 
-    # 1. Mail-Daten aus der DB holen
+    # Existenz & Zugehörigkeit prüfen (JOIN ist unnötig, da wir IMAP nicht anfassen)
     cursor.execute("""
-        SELECT m.id, m.uid, m.account_id, a.server, a.username, a.password_enc
-        FROM mails m
-        JOIN accounts a ON m.account_id = a.id
-        WHERE m.user_id = ? AND m.id = ?
+        SELECT id
+        FROM mails
+        WHERE user_id = ? AND id = ?
     """, (user_id, mail_id))
-    mail_data = cursor.fetchone()
-
-    if not mail_data:
+    if cursor.fetchone() is None:
         return jsonify({"status": "not found", "message": "Mail nicht gefunden"}), 404
 
-    account_id = mail_data["account_id"]
-    uid = mail_data["uid"]
+    try:
+        # Nur DB setzen: seen = 1/0 und flagged_action = 'spam'
+        cursor.execute("""
+            UPDATE mails
+               SET seen = ?, flagged_action = 'spam'
+             WHERE user_id = ? AND id = ?
+        """, (1 if seen_param else 0, user_id, mail_id))
+        conn.commit()
+    except Exception as e:
+        error_logger.error(f"DB-Update in api_mark_spam fehlgeschlagen: {e}")
+        return jsonify({"status": "error", "message": "DB-Update fehlgeschlagen"}), 500
 
-    # 2. In DB als Spam markieren; Gelesen-Status abhängig von mark_read
-    cursor.execute("""
-        UPDATE mails 
-        SET seen = ?, flagged_action = 'spam'
-        WHERE user_id = ? AND id = ?
-    """, (1 if mark_read else 0, user_id, mail_id))
-    conn.commit()
-
-    # 3. Sofortige IMAP-Aktualisierung NUR wenn mark_read=True (Seen setzen)
-    if mark_read:
-        socketio.emit("mark_seen", {
-            "account_id": account_id,
-            "uid": uid
-        }, namespace="/")
-
-    # 4. Frontend über Löschung/Entfernung aus der Liste informieren
-    socketio.emit("mail:deleted", {"id": mail_id}, namespace="/")
-
+    # Kein Socket-Emit nötig; das Frontend ruft fetchMails() & fetchUnreadCounts() ohnehin auf
     return jsonify({
         "status": "ok",
-        "message": f"Als Spam markiert; gesehen={'ja' if mark_read else 'nein'}"
+        "message": f"Spam markiert (seen={'1' if seen_param else '0'})"
     })
 
 @app.route("/api/mails")

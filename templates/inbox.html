@@ -48,11 +48,29 @@
 
 {% block scripts %}
 <script>
-  const DEBUG = {{ debug_mode|default(false)|tojson }};
-</script>
-<script>
+
+const DEBUG = {{ debug_mode|default(false)|tojson }};
 const activeAccount = {{ active_account|tojson }};
 let safeHtml = {};
+
+function formatGermanDateTime(isoString) {
+  if (!isoString) return "";
+  try {
+    const d = new Date(isoString);
+    const date = d.toLocaleDateString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
+    const time = d.toLocaleTimeString("de-DE", {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    return `${date}<br>${time}`;
+  } catch {
+    return isoString;
+  }
+}
 
 function fetchMails() {
   if (!activeAccount || typeof activeAccount !== "number") {
@@ -85,7 +103,7 @@ function fetchMails() {
         row.innerHTML = `
           <td>
             <div class="icon-actions">
-              <button class="button is-light is-small" onclick="markSpam(${mail.id})" title="Als Spam markieren">🔥</button>
+              <button class="button is-light is-small" onclick="markSpam(${mail.id}, true)" title="Als Spam markieren">🔥</button>
               <button class="button is-light is-small" onclick="markHam(${mail.id})" title="Absender whitelisten">✅</button>
               <button class="button is-light is-small" onclick="deleteMail(${mail.id})" title="Löschen">🗑️</button>
               <button class="button is-light is-small" onclick="markRead(${mail.id})" title="Als gelesen markieren">🔵</button>
@@ -104,7 +122,7 @@ function fetchMails() {
               ${mail.whitelisted ? '<span class="tag is-success is-light is-rounded" title="Absender ist auf der Whitelist">✅ Whitelist</span>' : ""}
             </span>
           </td>
-          <td>${mail.date?.split("T")[0] || ""}</td>
+          <td class="has-text-right">${formatGermanDateTime(mail.date)}</td>
         `;
         tbody.appendChild(row);
       });
@@ -112,53 +130,15 @@ function fetchMails() {
 }
 
 function fetchUnreadCounts() {
-  fetch("/api/unread_counts", { credentials: "include", headers: { "X-Requested-With": "XMLHttpRequest" } })
-    .then(async (res) => {
-      // 401: Server liefert JSON mit redirect (falls unser 401-Handler aktiv ist)
-      if (res.status === 401) {
-        try {
-          const p = await res.json();
-          window.location.href = p.redirect || "/login";
-        } catch {
-          window.location.href = "/login";
-        }
-        return Promise.reject(new Error("Unauthorized"));
-      }
-
-      // Redirect/HTML-Fallback: wenn wir HTML statt JSON bekommen, zur Login-Seite
-      const ct = (res.headers.get("content-type") || "").toLowerCase();
-      if (!ct.includes("application/json")) {
-        // evtl. schon umgeleitet? Dann direkt zur Ziel-URL
-        if (res.redirected && res.url) {
-          window.location.href = res.url;
-          return Promise.reject(new Error("Redirected"));
-        }
-        // sonst sicherheitshalber auf /login
-        window.location.href = "/login";
-        return Promise.reject(new Error("Non-JSON response"));
-      }
-
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${txt}`);
-      }
-
-      const data = await res.json();
-      if (!Array.isArray(data)) {
-        throw new Error("Unexpected payload (not an array)");
-      }
-      return data;
-    })
-    .then((counts) => {
-      counts.forEach((entry) => {
+  fetch("/api/unread_counts", {
+    credentials: "include"
+  })
+    .then(r => r.json())
+    .then(counts => {
+      counts.forEach(entry => {
         const tab = document.querySelector(`#account-tabs li[data-id='${entry.account_id}'] a`);
         if (tab) tab.textContent = `${tab.textContent.split(" (")[0]} (${entry.unread})`;
       });
-    })
-    .catch((err) => {
-      if (typeof DEBUG !== "undefined" && DEBUG) {
-        console.warn("fetchUnreadCounts failed:", err);
-      }
     });
 }
 
@@ -202,16 +182,25 @@ function deleteMail(id) {
   });
 }
 
-function markSpam(id) {
+function markSpam(id, seen = true) {
   fetch("/api/mail/spam", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ id, mark_read: true })
-  }).then(() => {
+    body: JSON.stringify({ id, seen }),
+    credentials: "include"
+  })
+  .then(r => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  })
+  .then(() => {
     hideModal(id);
     fetchMails();
     fetchUnreadCounts();
+  })
+  .catch(err => {
+    console.error("Spam-Markierung fehlgeschlagen:", err);
+    alert("Spam-Markierung fehlgeschlagen.");
   });
 }
 
