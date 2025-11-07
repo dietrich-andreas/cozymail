@@ -77,8 +77,30 @@
         });
       }
     });
-    </script>
 
+    (function() {
+      const origFetch = window.fetch;
+      window.fetch = async function(input, init) {
+        // Credentials immer mitschicken
+        init = init || {};
+        init.credentials = init.credentials || "include";
+
+        const res = await origFetch(input, init);
+        // 401? → redirecten (egal ob JSON oder HTML)
+        if (res.status === 401) {
+          try {
+            const txt = await res.text();
+            const obj = JSON.parse(txt || "{}");
+            window.location.href = obj.redirect || "/login";
+          } catch {
+            window.location.href = "/login";
+          }
+          throw new Error("unauthenticated");
+        }
+        return res;
+      };
+    })();
+    </script>
     {% block scripts %}{% endblock %}
   </body>
 </html>

@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 import eventlet, re
 eventlet.monkey_patch()
-
+import ast
 import hashlib
 import inspect
 import joblib
@@ -33,6 +33,7 @@ from flask import (Flask, current_app, flash, jsonify, redirect,
 from flask_socketio import SocketIO
 from imap_tools import AND, MailBox, MailMessageFlags
 from sklearn.naive_bayes import MultinomialNB
+from urllib.parse import unquote, unquote_plus
 
 from core.auth import get_accounts_for_user, verify_user
 from core.config import (ERROR_LOG_FILE, LOG_BASE, LOG_FILE, MODEL_BASE,
@@ -49,6 +50,15 @@ from core.logger import (get_error_logger, setup_main_logger,
 ##################################
 app = Flask(__name__)
 app.secret_key = '1=!R+)B?op7+BE[v9![Nb.a-E'
+
+# Session/Cookie-Setup
+app.config.update(
+    SESSION_COOKIE_NAME="cozymail_session",
+    SESSION_COOKIE_SAMESITE="Lax",   # wenn nur http:// intern: Lax reicht
+    SESSION_COOKIE_SECURE=False,     # True nur bei https
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12)  # Session-Dauer
+)
+
 socketio = SocketIO(app, async_mode="eventlet")
 
 # Logger initialisieren
@@ -65,6 +75,8 @@ def db_handler(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         if not session.get('logged_in'):
+            if request.path.startswith("/api/"):
+                return jsonify({"status": "unauthenticated", "redirect": "/login"}), 401
             return redirect(url_for('login'))
         
         # Basisparameter
@@ -147,9 +159,9 @@ def index(cursor, conn, user_id, account, **kwargs):
         
         cursor.execute("""
             SELECT 1 FROM whitelist 
-            WHERE user_id = ? AND account_id = ? 
-            AND (sender_address = ? OR sender_address = ?)
-        """, (user_id, account['id'], email, f"*@{domain}"))
+            WHERE user_id = ?
+              AND (sender_address = ? OR sender_address = ?)
+        """, (user_id, email, f"*@{domain}"))
         
         mails.append({
             **dict(row),
@@ -364,7 +376,7 @@ def filters():
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM accounts WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT * FROM accounts WHERE user_id = ? ORDER BY sort_order ASC, id ASC", (user_id,))
         accounts = cursor.fetchall()
 
         # Fallback: Erstes Konto als aktiv
@@ -417,6 +429,96 @@ def delete_filter():
 
     return redirect(url_for("filters", account=account_id))
 
+@app.route("/filters/<int:filter_id>/edit", methods=["GET", "POST"])
+@login_required
+def edit_filter(filter_id):
+    user_id = session.get("user_id")
+    account_id = request.args.get("account_id", type=int)
+
+    # Filter + Account validieren
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM filters
+            WHERE id = ? AND user_id = ?
+        """, (filter_id, user_id))
+        frow = cursor.fetchone()
+        if not frow:
+            flash("Filter nicht gefunden.", "error")
+            return redirect(url_for("filters", account=account_id or 0))
+
+        # account_id aus URL validieren oder aus Filter ziehen
+        if not account_id:
+            account_id = frow["account_id"]
+
+        cursor.execute("""
+            SELECT username FROM accounts
+            WHERE id = ? AND user_id = ?
+        """, (account_id, user_id))
+        acc = cursor.fetchone()
+        account_username = acc["username"] if acc else "(Konto)"
+
+        if request.method == "POST":
+            # Form-Daten
+            field = request.form["field"].strip()
+            mode = request.form["mode"].strip()
+            value = request.form["value"].strip()
+            target_folder = (request.form.get("target_folder") or "INBOX.").strip()
+            is_read = 1 if request.form.get("is_read") == "on" else 0
+            active = 1 if request.form.get("active") == "on" else 0
+
+            # Update
+            cursor.execute("""
+                UPDATE filters
+                   SET field = ?, mode = ?, value = ?, target_folder = ?, is_read = ?, active = ?
+                 WHERE id = ? AND user_id = ?
+            """, (field, mode, value, target_folder, is_read, active, filter_id, user_id))
+            conn.commit()
+
+            flash("Änderungen gespeichert.", "success")
+            return redirect(url_for("filters", account=account_id))
+
+        # GET → Formular rendern
+        filter_dict = dict(frow)
+        return render_template(
+            "filters_edit.html",
+            filter=filter_dict,
+            account_id=account_id,
+            account_username=account_username
+        )
+
+@app.route("/filters/<int:filter_id>/toggle", methods=["POST"])
+@login_required
+def toggle_filter(filter_id):
+    user_id = session.get("user_id")
+    account_id = request.form.get("account_id")
+
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT active FROM filters WHERE id = ? AND user_id = ?", (filter_id, user_id))
+        row = c.fetchone()
+        if not row:
+            flash("Filter nicht gefunden.", "error")
+            return redirect(url_for("filters", account=account_id or 0))
+
+        new_active = 0 if row["active"] else 1
+        c.execute("UPDATE filters SET active = ? WHERE id = ? AND user_id = ?", (new_active, filter_id, user_id))
+        conn.commit()
+
+    return redirect(url_for("filters", account=account_id))
+
+@app.template_filter('urldecode')
+def urldecode(value: str) -> str:
+    if not value:
+        return ""
+    # unquote_plus: dekodiert %xx UND '+' → ' '
+    try:
+        return unquote_plus(value)
+    except Exception:
+        # Fallback – gibt Rohwert zurück statt 500
+        return value
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -428,6 +530,7 @@ def login():
                 'user_id': user['id'],
                 'username': user['username']
             })
+            session.permanent = True   # <-- wichtig
             return redirect(url_for('index'))
     return render_template("login.html")
 
@@ -631,9 +734,9 @@ def whitelist(cursor, conn, user_id, **kwargs):
     if request.method == "POST":
         sender = request.form["sender_address"].strip().lower()
         cursor.execute("""
-            INSERT OR IGNORE INTO whitelist (user_id, account_id, sender_address)
-            SELECT ?, id, ? FROM accounts WHERE user_id = ?
-        """, (user_id, sender, user_id))
+            INSERT OR IGNORE INTO whitelist (user_id, sender_address)
+            VALUES (?, ?)
+        """, (user_id, sender))
         conn.commit()
         return redirect(url_for("whitelist"))
 
@@ -679,16 +782,47 @@ def api_mail(cursor, conn, user_id):
 
     mail = dict(row)
 
-    # Header-Parsing absichern
+    # -----------------------------------------------
+    # Header-Parsing und Formatierung
+    # -----------------------------------------------
     from core.utils import get_header_case_insensitive
-    import ast
+    import ast, re
+
+    raw_headers = mail.get("headers") or ""
+    headers_pretty = raw_headers
 
     try:
-        header_dict = ast.literal_eval(mail.get("headers", "{}"))
-        mail["recipient"] = get_header_case_insensitive(header_dict, "To")
+        # 1) Wörtliche \r\n und \n in echte Newlines umwandeln
+        headers_pretty = raw_headers.replace("\\r\\n", "\n").replace("\\n", "\n")
+
+        # 2) Falls es ein dict-String ist (wie {'From': '...', 'To': '...'})
+        #    -> schöner darstellen als Textblock
+        header_dict = None
+        try:
+            header_dict = ast.literal_eval(raw_headers)
+        except Exception:
+            header_dict = None
+
+        if isinstance(header_dict, dict):
+            # Schlüssel alphabetisch sortieren für Stabilität
+            formatted_lines = []
+            for k, v in sorted(header_dict.items()):
+                # Zeilenumbrüche in Values etwas einrücken
+                v_clean = re.sub(r'[\r\n]+', ' ', str(v)).strip()
+                formatted_lines.append(f"{k}: {v_clean}")
+            headers_pretty = "\n".join(formatted_lines)
+
+        # 3) Empfänger aus Header extrahieren
+        mail["recipient"] = ""
+        if isinstance(header_dict, dict):
+            mail["recipient"] = get_header_case_insensitive(header_dict, "To")
+
     except Exception as e:
         mail["recipient"] = ""
         current_app.logger.warning(f"Fehler beim Header-Parsing in /api/mail: {e}")
+
+    # "Hübsche" Header dem JSON mitgeben
+    mail["headers_pretty"] = headers_pretty
 
     return jsonify(mail)
 
@@ -716,100 +850,136 @@ def api_delete_mail(cursor, conn, user_id):
 @app.route("/api/mail/ham", methods=["POST"])
 @db_handler
 def api_mark_ham(cursor, conn, user_id):
+    """
+    Markiert eine Mail als 'Ham', trainiert optional und fügt EINE Whitelist-Regel hinzu:
+    - scope='address'  -> exact: user@example.com
+    - scope='domain'   -> wildcard: *@example.com
+    """
     username = session.get("username")
-    data = request.get_json()
+    data = request.get_json() or {}
     mail_id = data.get("id")
-    if not mail_id:
-        return jsonify({"status": "error"}), 400
+    scope   = (data.get("scope") or "address").strip().lower()  # 'address' | 'domain'
 
+    if not mail_id:
+        return jsonify({"status": "error", "message": "Mail-ID fehlt"}), 400
+
+    # Mail-Daten
     cursor.execute("""
         SELECT id, subject, body, raw, account_id, sender
         FROM mails
         WHERE user_id = ? AND id = ?
     """, (user_id, mail_id))
     row = cursor.fetchone()
-
     if not row:
-        return jsonify({"status": "not found"}), 404
+        return jsonify({"status": "not found", "message": "Mail nicht gefunden"}), 404
 
-    subject = row[1] or ""
-    body = row[2] or row[3] or ""
-    account_id = row[4]
-    sender = row[5].strip().lower()
+    subject = row["subject"] or ""
+    body    = row["body"] or row["raw"] or ""
 
-    model_path = os.path.join(MODEL_BASE, username, "spam_model.pkl")
-    vectorizer_path = os.path.join(MODEL_BASE, username, "spam_vectorizer.pkl")
+    from email.utils import parseaddr
+    _, email_addr = parseaddr(row["sender"] or "")
+    email_addr = email_addr.strip().lower()
 
-    if not os.path.exists(vectorizer_path):
-        return jsonify({"status": "no vectorizer"}), 500
+    # Ziel-Wert je nach Scope bestimmen
+    if scope == "domain":
+        if "@" not in email_addr:
+            return jsonify({"status": "error", "message": "Absenderadresse ohne Domain"}), 400
+        domain = email_addr.split("@", 1)[1]
+        whitelist_value = f"*@{domain}"
+    else:
+        # default: address
+        whitelist_value = email_addr
 
-    vectorizer = joblib.load(vectorizer_path)
-    X = vectorizer.transform([subject + "\n" + body])
+    # Optionales Training (best effort)
+    try:
+        model_path      = os.path.join(MODEL_BASE, username, "spam_model.pkl")
+        vectorizer_path = os.path.join(MODEL_BASE, username, "spam_vectorizer.pkl")
+        if os.path.exists(vectorizer_path):
+            vectorizer = joblib.load(vectorizer_path)
+            X = vectorizer.transform([subject + "\n" + body])
+            model = joblib.load(model_path) if os.path.exists(model_path) else MultinomialNB()
+            model.partial_fit(X, [0], classes=[0, 1])  # 0 = ham
+            joblib.dump(model, model_path)
+    except Exception as e:
+        error_logger.warning(f"⚠️ Training übersprungen in api_mark_ham(): {e}")
 
-    model = joblib.load(model_path) if os.path.exists(model_path) else MultinomialNB()
-    model.partial_fit(X, [0], classes=[0, 1])
-    joblib.dump(model, model_path)
+    # Eintrag (nur einer) nutzerweit setzen
+    try:
+        cursor.execute("""
+            INSERT OR IGNORE INTO whitelist (user_id, sender_address)
+            VALUES (?, ?)
+        """, (user_id, whitelist_value))
+        conn.commit()
+    except Exception as e:
+        error_logger.error(f"❌ Whitelist-Insert fehlgeschlagen: {e}")
+        return jsonify({"status": "error", "message": "Whitelist konnte nicht aktualisiert werden"}), 500
 
-    cursor.execute("""
-        INSERT OR IGNORE INTO whitelist (user_id, account_id, sender_address)
-        VALUES (?, ?, ?)
-    """, (user_id, account_id, sender))
-    conn.commit()
-
+    # Mail aus der Liste entfernen (wie zuvor) – alternativ: seen=1 statt löschen
     cursor.execute("DELETE FROM mails WHERE user_id = ? AND id = ?", (user_id, mail_id))
     conn.commit()
 
     socketio.emit("mail:deleted", {"id": mail_id}, namespace="/")
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "message": f"Whitelist aktualisiert: {whitelist_value}"})
 
 @app.route("/api/mail/read", methods=["POST"])
 @db_handler
 def api_mark_read(cursor, conn, user_id):
-    data = request.get_json()
+    from flask import current_app, request, jsonify
+
+    data = request.get_json(silent=True) or {}
     mail_id = data.get("id")
     if not mail_id:
         return jsonify({"status": "error", "message": "Mail-ID fehlt"}), 400
 
     try:
-        # 1. Account- und Mail-Daten abrufen
+        # 1) Mail + Account laden
         cursor.execute("""
-            SELECT m.uid, a.server, a.username, a.password_enc, a.id as account_id
-            FROM mails m 
+            SELECT m.uid, a.server, a.username, a.password_enc, a.id AS account_id
+            FROM mails m
             JOIN accounts a ON m.account_id = a.id
             WHERE m.user_id = ? AND m.id = ?
         """, (user_id, mail_id))
         mail_data = cursor.fetchone()
-
         if not mail_data:
             return jsonify({"status": "not found", "message": "Mail nicht gefunden"}), 404
 
-        # 2. SOFORT auf IMAP als gelesen markieren
+        # 2) Sofort auf IMAP als gelesen markieren
         password = decrypt(mail_data["password_enc"])
+        from imap_tools import MailBox
         with MailBox(mail_data["server"]).login(mail_data["username"], password) as mailbox:
             mailbox.folder.set("INBOX")
             mailbox.flag([str(mail_data["uid"])], ['\\Seen'], True)
 
-        # 3. In Datenbank aktualisieren
+        # 3) DB aktualisieren
         cursor.execute("""
-            UPDATE mails SET seen = 1 
+            UPDATE mails SET seen = 1
             WHERE user_id = ? AND id = ?
         """, (user_id, mail_id))
         conn.commit()
 
-        # 4. Frontend benachrichtigen
-        socketio.emit("mail:read", {
-            "id": mail_id,
-            "account_id": mail_data["account_id"]
-        }, namespace="/")
+        # 4) Frontend informieren – fehlschlag darf die Antwort NICHT kaputtmachen
+        try:
+            sio = (current_app.extensions.get("socketio")
+                   if hasattr(current_app, "extensions") else None)
+            if sio:
+                sio.emit("mail:read", {
+                    "id": mail_id,
+                    "account_id": mail_data["account_id"]
+                }, namespace="/")
+            else:
+                current_app.logger.debug("socketio nicht registriert – 'mail:read' nicht gesendet.")
+        except Exception as emit_err:
+            current_app.logger.warning(f"socketio.emit fehlgeschlagen: {emit_err}")
 
-        return jsonify({"status": "ok"})
+        return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        error_logger.error(f"Fehler in api_mark_read: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": "Serverfehler beim Markieren als gelesen"
-        }), 500
+        # Fallback-Logger, falls error_logger nicht existiert
+        try:
+            error_logger.error(f"Fehler in api_mark_read: {e}")
+        except Exception:
+            current_app.logger.exception("Fehler in api_mark_read")
+        return jsonify({"status": "error", "message": "Serverfehler beim Markieren als gelesen"}), 500
 
 @app.route("/api/mail/spam", methods=["POST"])
 @db_handler
@@ -873,9 +1043,9 @@ def api_mails(cursor, conn, user_id):
             
             cursor.execute("""
                 SELECT 1 FROM whitelist 
-                WHERE user_id = ? AND account_id = ?
-                AND (sender_address = ? OR sender_address = ?)
-            """, (user_id, account_id, email, f"*@{domain}"))
+                WHERE user_id = ?
+                  AND (sender_address = ? OR sender_address = ?)
+            """, (user_id, email, f"*@{domain}"))
             
             mails.append({
                 "id": row["id"],
@@ -965,15 +1135,15 @@ def handle_mark_seen(data):
 ##################################
 #         Helper Functions       #
 ##################################
-def add_to_whitelist_sqlite(user_id, account_id, sender_address):
-    """Fügt eine Adresse in die SQLite-Whitelist ein"""
+def add_to_whitelist_sqlite(user_id, _account_id, sender_address):
+    """Nutzerweite Whitelist (account_id bewusst ignoriert)."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                INSERT OR IGNORE INTO whitelist (user_id, account_id, sender_address)
-                VALUES (?, ?, ?)
-            """, (user_id, account_id, sender_address.strip().lower()))
+                INSERT OR IGNORE INTO whitelist (user_id, sender_address)
+                VALUES (?, ?)
+            """, (user_id, sender_address.strip().lower()))
             conn.commit()
         except sqlite3.Error as e:
             print(f"Fehler beim Einfügen in Whitelist: {e}")

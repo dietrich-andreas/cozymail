@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS filters (
   is_read INTEGER DEFAULT 0,
   active INTEGER DEFAULT 1,
   target_folder TEXT,
+  usage_count INTEGER DEFAULT 0,
+  last_used   TEXT DEFAULT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
@@ -92,10 +94,10 @@ CREATE TABLE IF NOT EXISTS mails (
 CREATE TABLE IF NOT EXISTS whitelist (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
-  account_id INTEGER NOT NULL,
   sender_address TEXT NOT NULL,
   added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(user_id, account_id, sender_address)
+  UNIQUE(user_id, sender_address),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- =========================
@@ -120,7 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_mails_flagged_action ON mails(flagged_action);
 CREATE INDEX IF NOT EXISTS idx_mails_created_at ON mails(created_at);
 
 -- WHITELIST
-CREATE INDEX IF NOT EXISTS idx_whitelist_user_acc ON whitelist(user_id, account_id);
+CREATE INDEX IF NOT EXISTS idx_whitelist_user   ON whitelist(user_id);
 CREATE INDEX IF NOT EXISTS idx_whitelist_sender ON whitelist(sender_address);
 """
 

@@ -185,68 +185,86 @@ def mark_mail_as_seen_imap(account_id, uid):
     except Exception as e:
         write_error_log(account["user_id"], account["username"], f"Fehler beim Sofort-Setzen als gelesen: UID={uid}, {e}")
 
-def load_whitelist(account_id):
+def load_whitelist(user_id):
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT sender_address FROM whitelist WHERE account_id = ?", (account_id,))
+        cursor.execute("SELECT sender_address FROM whitelist WHERE user_id = ?", (user_id,))
         return [row[0] for row in cursor.fetchall()]
 
 def apply_filters(account, msg):
     try:
         with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT field, mode, value, target_folder, is_read
+            cur = conn.cursor()
+            # Reihenfolge stabil halten (ältere Regeln zuerst)
+            cur.execute("""
+                SELECT id, field, mode, value, target_folder, is_read
                 FROM filters
                 WHERE account_id = ? AND user_id = ? AND active = 1
+                ORDER BY created_at ASC, id ASC
             """, (account["id"], account["user_id"]))
-            filters = cursor.fetchall()
+            filters = cur.fetchall()
 
-        for field, mode, value, target_folder, is_read in filters:
-            haystack = ""
-            if field == "subject":
-                haystack = msg.subject or ""
-            elif field in ("sender", "from"):
-                raw = msg.from_ or ""
-                _, haystack = parseaddr(raw)
-            elif field == "to":
-                raw = msg.headers.get("To", "") or ""
-                _, haystack = parseaddr(raw)
-            elif field == "body":
-                haystack = msg.text or ""
-            elif field == "headers":
-                haystack = str(msg.headers)
-            else:
-                continue  # Unbekanntes Feld überspringen
+            for fid, field, mode, value, target_folder, is_read in filters:
+                # Kandidaten-Text bestimmen
+                if field == "subject":
+                    haystack = msg.subject or ""
+                elif field in ("sender", "from"):
+                    raw = msg.from_ or ""
+                    _, haystack = parseaddr(raw)
+                elif field == "to":
+                    raw = msg.headers.get("To", "") or ""
+                    _, haystack = parseaddr(raw)
+                elif field == "body":
+                    haystack = msg.text or ""
+                elif field == "headers":
+                    haystack = str(msg.headers)
+                else:
+                    continue  # unbekanntes Feld
 
-            match = False
-            if mode == "contains":
-                match = value.lower() in haystack.lower()
-            elif mode == "startswith":
-                match = haystack.lower().startswith(value.lower())
-            elif mode == "endswith":
-                match = haystack.lower().endswith(value.lower())
-            elif mode == "exact":
-                match = haystack.lower() == value.lower()
-            elif mode == "regex":
-                import re
-                try:
-                    match = bool(re.search(value, haystack))
-                except re.error:
-                    continue
+                match = False
+                if mode == "regex":
+                    import re
+                    try:
+                        match = bool(re.search(value, haystack or "", flags=re.IGNORECASE))
+                    except re.error:
+                        continue  # kaputtes Regex ignorieren
+                else:
+                    needle = (value or "").lower()
+                    hay = (haystack or "").lower()
+                    if mode == "contains":
+                        match = needle in hay
+                    elif mode == "startswith":
+                        match = hay.startswith(needle)
+                    elif mode == "endswith":
+                        match = hay.endswith(needle)
+                    elif mode == "exact":
+                        match = hay == needle
 
-            if match:
-                decoded_folder = unquote(target_folder) or "INBOX"
-                if DEBUG: print(f"[DEBUG] Filterregel greift für UID={msg.uid} → {field} {mode} {value} → {decoded_folder}, is_read={is_read}")
-                return {
-                    "target_folder": decoded_folder,
-                    "is_read": bool(is_read)
-                }
+                if match:
+                    # Treffer zählen (ohne zweite DB-Verbindung)
+                    try:
+                        cur.execute("""
+                            UPDATE filters
+                               SET usage_count = COALESCE(usage_count, 0) + 1,
+                                   last_used   = CURRENT_TIMESTAMP
+                             WHERE id = ?
+                        """, (fid,))
+                        conn.commit()
+                    except Exception as stat_err:
+                        if DEBUG: print(f"[!] Konnte usage_count nicht erhöhen (Filter {fid}): {stat_err}")
 
-        # if DEBUG: print(f"[DEBUG] Keine Filterregel für UID={msg.uid}")
-        return None
+                    decoded_folder = unquote(target_folder) or "INBOX"
+                    if DEBUG:
+                        print(f"[DEBUG] Filterregel greift für UID={msg.uid} → {field} {mode} {value} → {decoded_folder}, is_read={is_read}")
+                    return {
+                        "target_folder": decoded_folder,
+                        "is_read": bool(is_read)
+                    }
+
+            return None
     except Exception as e:
-        if DEBUG: print(f"[!] Fehler beim Anwenden der Filter für UID={msg.uid}: {e}")
+        if DEBUG:
+            print(f"[!] Fehler beim Anwenden der Filter für UID={getattr(msg, 'uid', '?')}: {e}")
         return None
 
 def save_mail_to_db(account, msg):
@@ -398,7 +416,7 @@ def idle_monitor(account):
 
             mails = fetch_unseen_mails(account)
 
-            whitelist = load_whitelist(account.get("id"))
+            whitelist = load_whitelist(account["user_id"])
 
             for msg in mails:
                 try:

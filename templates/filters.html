@@ -78,9 +78,11 @@
       <th>Modus</th>
       <th>Wert</th>
       <th>Zielordner</th>
+      <th>Treffer</th>
+      <th>Zuletzt</th>
       <th>Gelesen</th>
       <th>Status</th>
-      <th>Aktion</th>
+      <th class="has-text-centered" style="width:90px">Aktion</th>
     </tr>
   </thead>
   <tbody>
@@ -97,14 +99,42 @@
         {% endif %}
       </td>
       <td>{{ f.value }}</td>
-      <td>{{ f.target_folder or "INBOX." }}</td>
-      <td>{{ "✅" if f.is_read else "❌" }}</td>
-      <td>{{ "🟢 Aktiv" if f.active else "⚪️ Inaktiv" }}</td>
+      <td>{{ (f.target_folder or "INBOX.") | urldecode }}</td>
+      <td>{{ f.usage_count or 0 }}</td>
       <td>
-        <form method="post" action="/filters/delete">
+        {% if f.last_used %}
+          {% set dt = f.last_used.replace('T',' ') %}
+          {% set y = dt[:4] %}
+          {% set m = dt[5:7] %}
+          {% set d = dt[8:10] %}
+          {% set hm = dt[11:16] %}
+          {{ d }}.{{ m }}.{{ y }} {{ hm }} Uhr
+        {% else %}
+          –
+        {% endif %}
+      </td>
+      <td>{{ "✅" if f.is_read else "❌" }}</td>
+      <td class="has-text-centered">
+        {% if f.active %}
+          <span title="Aktiv">🟢</span>
+        {% else %}
+          <span title="Inaktiv">🔴</span>
+        {% endif %}
+      </td>
+      <td class="is-narrow has-text-centered">
+        <a class="button is-small is-info is-light"  href="{{ url_for('edit_filter', filter_id=f.id, account_id=active_account) }}" title="Bearbeiten" aria-label="Bearbeiten">✏️</a>
+        <form method="post" action="/filters/delete" style="display:inline">
           <input type="hidden" name="filter_id" value="{{ f.id }}">
           <input type="hidden" name="account_id" value="{{ active_account }}">
-          <button class="button is-small is-danger is-light" type="submit">🗑️ Löschen</button>
+          <button class="button is-small is-danger is-light" type="submit" title="Löschen" aria-label="Löschen">🗑️</button>
+        </form>
+        <form method="post" action="{{ url_for('toggle_filter', filter_id=f.id) }}" style="display:inline">
+          <input type="hidden" name="account_id" value="{{ active_account }}">
+          <button class="button is-small is-light {{ 'is-success' if f.active else '' }}"
+                  title="{{ 'Deaktivieren' if f.active else 'Aktivieren' }}"
+                  aria-label="Toggle aktiv">
+            {{ '🟢' if f.active else '🔴' }}
+          </button>
         </form>
       </td>
     </tr>

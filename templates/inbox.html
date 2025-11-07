@@ -3,44 +3,91 @@
 {% set title = "Posteingang" %}
 {% block head %}
 <style>
-  :root {
+  :root{
     --col-from: 260px;
     --col-subject: 520px;
+    --dlg-top: 72px;      /* Abstand von oben */
+    --dlg-width: 1400px;  /* Wunschbreite */
   }
 
-  .domain { color: gray; font-size: 0.85em; }
+  .domain { color: gray; font-size: .85rem; }
   .from-info { word-break: break-word; }
-  .nowrap-from {
+  .nowrap-from{
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     display: inline-block; max-width: calc(var(--col-from) - 24px);
   }
   .subject-text{
     display: block;
-    white-space: normal;        /* war: nowrap */
+    white-space: normal;
     word-break: break-word;
-    overflow: visible;          /* kein Ellipsis mehr */
-    text-overflow: clip;        /* explizit kein … */
+    overflow: visible;
+    text-overflow: clip;
   }
-  .table td { vertical-align: middle; }
+  .table td{ vertical-align: middle; }
 
   /* Spaltenbreiten */
   #mail-table col.col-from    { width: var(--col-from); }
   #mail-table col.col-subject { width: auto; }
   #mail-table col.col-actions { width: 1%; }
 
-  /* 3. Spalte: immer rechtsbündig */
-  td.cell-actions { position: relative; text-align: right; white-space: nowrap; }
-  .row-date, .row-actions {
-    position: absolute; top: 50%; right: 0.75rem; transform: translateY(-50%);
+  /* 3. Spalte rechtsbündig + Hover-Aktionen */
+  td.cell-actions{ position: relative; text-align: right; white-space: nowrap; }
+  .row-date, .row-actions{
+    position: absolute; top: 50%; right: .75rem; transform: translateY(-50%);
     transition: opacity .15s ease;
   }
-
-  /* beide Spans an exakt derselben Stelle platzieren */
-  .row-date { opacity: 1; }
-  .row-actions { opacity: 0; pointer-events: none; }
-  tr:hover .row-date { opacity: 0; }
-  tr:hover .row-actions { opacity: 1; pointer-events: all; }
+  .row-date{ opacity: 1; }
+  .row-actions{ opacity: 0; pointer-events: none; }
+  tr:hover .row-date{ opacity: 0; }
+  tr:hover .row-actions{ opacity: 1; pointer-events: all; }
   .icon-btn.button.is-light.is-small{ padding: .35rem .45rem; }
+
+  /* Dialog oben "gepinnt" */
+  dialog.mail-dialog{
+    position: fixed;
+    top: var(--dlg-top);
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(var(--dlg-width), calc(100vw - 2rem));
+    max-height: calc(100vh - var(--dlg-top) - 2rem);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  dialog.mail-dialog::backdrop{ background: rgba(10,10,10,.6); }
+
+  /* Karte im Dialog */
+  .mail-card{
+    display: flex; flex-direction: column;
+    max-height: inherit;
+    background: #fff; border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.2);
+  }
+  .mail-card header,
+  .mail-card footer{
+    position: sticky; background: #fff; z-index: 1; padding: .75rem 1rem;
+  }
+  .mail-card header{ top: 0; border-bottom: 1px solid #eee; }
+  .mail-card footer{ bottom: 0; border-top: 1px solid #eee; }
+  .mail-card .body{ overflow: auto; padding: 1rem; min-height: 30vh; }
+
+  /* Header-Pre inkl. Zeilennummern */
+  #modals pre{
+    position: relative;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font: 0.9rem/1.4 monospace;
+    background: #f7f7f7; border-radius: 6px;
+    padding: .75rem 1rem .75rem 3.5em;
+    counter-reset: linenumber;
+  }
+  #modals pre span.line{ display: block; counter-increment: linenumber; }
+  #modals pre span.line::before{
+    content: counter(linenumber);
+    position: absolute; left: 0; width: 3em;
+    text-align: right; color: #888; padding-right: .5em;
+  }
 </style>
 {% endblock %}
 
@@ -78,32 +125,34 @@
 <script>
 const DEBUG = {{ debug_mode|default(false)|tojson }};
 const activeAccount = {{ active_account|tojson }};
-let safeHtml = {};
 
-function formatGermanDateTime(isoString) {
-  if (!isoString) return "";
-  try {
+/* Datum für Anzeige */
+function formatGermanDateTime(isoString){
+  if(!isoString) return "";
+  try{
     const d = new Date(isoString);
     const date = d.toLocaleDateString("de-DE", { day:"2-digit", month:"2-digit", year:"numeric" });
     const time = d.toLocaleTimeString("de-DE", { hour:"2-digit", minute:"2-digit" });
     return `${date} ${time}`;
-  } catch { return isoString; }
+  }catch{ return isoString; }
 }
 
-function fetchMails() {
-  if (!activeAccount || typeof activeAccount !== "number") {
+/* Mails laden */
+function fetchMails(){
+  if(!activeAccount || typeof activeAccount !== "number"){
     console.warn("⚠️ Kein gültiges Konto ausgewählt. activeAccount:", activeAccount);
     return;
   }
-  fetch(`/api/mails?account_id=${activeAccount}`, { credentials: "include" })
-    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+  fetch(`/api/mails?account_id=${activeAccount}`)
+    .then(r => { if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
     .then(data => {
       const tbody = document.getElementById("mail-body");
       tbody.innerHTML = "";
       const modalContainer = document.getElementById("modals");
-      if (!document.querySelector(".modal.is-active")) modalContainer.innerHTML = "";
+      /* nur aufräumen, wenn KEIN <dialog> offen ist */
+      if(!document.querySelector('dialog.mail-dialog[open]')) modalContainer.innerHTML = "";
 
-      if (!Array.isArray(data) || !data.length) {
+      if(!Array.isArray(data) || !data.length){
         tbody.innerHTML = '<tr><td colspan="3">Keine neuen Mails</td></tr>';
         return;
       }
@@ -111,27 +160,22 @@ function fetchMails() {
       data.forEach(mail => {
         const row = document.createElement("tr");
         row.innerHTML = `
-          <!-- Spalte 1: Von -->
           <td class="from-info">
-            <span class="nowrap-from">${mail.from_ || mail.sender || "(unbekannt)"}</span><br>
+            <span class="nowrap-from">${mail.from || mail.sender || "(unbekannt)"}</span><br>
             <span class="domain">
               ${mail.domain || ""}
               ${mail.whitelisted ? '<span class="tag is-success is-light is-rounded" title="Absender ist auf der Whitelist">✅ Whitelist</span>' : ""}
             </span>
           </td>
-
-          <!-- Spalte 2: Betreff (ohne Button) -->
           <td>
             <span class="subject-text">${mail.subject || "(kein Betreff)"}</span>
           </td>
-
-          <!-- Spalte 3: Datum rechts / Aktionen auf Hover -->
           <td class="cell-actions">
             <span class="row-date">${formatGermanDateTime(mail.date)}</span>
             <span class="row-actions">
               <button class="button is-light is-small icon-btn" onclick="loadModal(${mail.id})" title="Mail anzeigen">🔍</button>
               <button class="button is-light is-small icon-btn" onclick="markSpam(${mail.id}, true)" title="Als Spam markieren">🔥</button>
-              <button class="button is-light is-small icon-btn" onclick="markHam(${mail.id})" title="Absender whitelisten">✅</button>
+              <button class="button is-light is-small icon-btn" onclick="markHam(${mail.id}, '${mail.domain || ""}')" title="Absender whitelisten">✅</button>
               <button class="button is-light is-small icon-btn" onclick="deleteMail(${mail.id})" title="Löschen">🗑️</button>
               <button class="button is-light is-small icon-btn" onclick="markRead(${mail.id})" title="Als gelesen markieren">🔵</button>
             </span>
@@ -143,119 +187,226 @@ function fetchMails() {
     .catch(err => console.error(err));
 }
 
-function fetchUnreadCounts() {
-  fetch("/api/unread_counts", { credentials: "include" })
+/* Zähler je Tab aktualisieren */
+function fetchUnreadCounts(){
+  fetch("/api/unread_counts")
     .then(r => r.json())
     .then(counts => {
       counts.forEach(entry => {
         const tab = document.querySelector(`#account-tabs li[data-id='${entry.account_id}'] a`);
-        if (tab) tab.textContent = `${tab.textContent.split(" (")[0]} (${entry.unread})`;
+        if(tab) tab.textContent = `${tab.textContent.split(" (")[0]} (${entry.unread})`;
       });
     });
 }
 
-function markRead(id) {
+/* Aktionen */
+function markRead(id){
   fetch("/api/mail/read", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }), credentials: "include"
-  }).then(r => r.json()).then(data => {
-    if (data.status === "ok") { hideModal(id); fetchMails(); fetchUnreadCounts(); }
-    else alert("Markieren fehlgeschlagen: " + (data.message || "Unbekannter Fehler"));
-  }).catch(() => alert("Netzwerkfehler beim Markieren als gelesen"));
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id })
+  })
+  .then(async r => {
+    let data = {};
+    try { data = await r.json(); } catch {}
+    if (!r.ok || data.status !== "ok") throw new Error(data.message || `HTTP ${r.status}`);
+    closeMailDialog(id); fetchMails(); fetchUnreadCounts();
+  })
+  .catch(err => alert("Markieren fehlgeschlagen: " + err.message));
 }
 
-function deleteMail(id) {
-  fetch("/api/mail/delete", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }), credentials: "include"
-  }).then(() => { hideModal(id); fetchMails(); fetchUnreadCounts(); });
-}
-
-function markSpam(id, seen = true) {
+function markSpam(id, seen = true){
   fetch("/api/mail/spam", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, seen }), credentials: "include"
+    body: JSON.stringify({ id, seen })
   })
   .then(r => r.json())
-  .then(() => { hideModal(id); fetchMails(); fetchUnreadCounts(); })
+  .then(() => { closeMailDialog(id); fetchMails(); fetchUnreadCounts(); })
   .catch(() => alert("Spam-Markierung fehlgeschlagen."));
 }
 
-function markHam(id) {
-  fetch("/api/mail/ham", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }), credentials: "include"
-  }).then(fetchMails);
+function markHam(id, domain = ""){
+  showWhitelistChoice(domain).then(scope => {
+    if(!scope) return; // abgebrochen
+    fetch("/api/mail/ham", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, scope })
+    })
+    .then(async r => {
+      let data = {}; try{ data = await r.json(); }catch{}
+      if(!r.ok) throw new Error(data.message || data.status || `HTTP ${r.status}`);
+      closeMailDialog(id); fetchMails(); fetchUnreadCounts();
+    })
+    .catch(err => alert("Whitelist fehlgeschlagen: " + err.message));
+  });
 }
 
-/* ------- Modal (unverändert außer Hilfsfunktionen) ------- */
-function loadModal(id) {
-  fetch(`/api/mail?id=${id}`, { credentials: "include" })
-    .then(r => r.json())
-    .then(mail => {
-      const modalHTML = `
-      <div id="modal-${mail.id}" class="modal is-active">
-        <div class="modal-background" onclick="hideModal(${mail.id})"></div>
+function deleteMail(id){
+  fetch("/api/mail/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id })
+  })
+  .then(async r => {
+    let data = {};
+    try { data = await r.json(); } catch {}
+    if (!r.ok || (data.status && data.status !== "ok")) {
+      throw new Error(data.message || `HTTP ${r.status}`);
+    }
+    // Modal schließen, Liste + Zähler aktualisieren
+    closeMailDialog(id);
+    fetchMails();
+    fetchUnreadCounts();
+  })
+  .catch(err => alert("Löschen fehlgeschlagen: " + err.message));
+}
+
+/* Auswahl-Dialog (Bulma-Modal, klein & simpel) */
+function showWhitelistChoice(domain){
+  return new Promise(resolve => {
+    const dlabel = domain ? `*@${domain}` : "ganze Domain";
+    const html = `
+      <div class="modal is-active" id="wl-choice">
+        <div class="modal-background"></div>
         <div class="modal-card">
-          <header class="modal-card-head modal-header-layout">
-            <p class="modal-card-title">Mail anzeigen</p>
-            <button class="delete" aria-label="close" onclick="hideModal(${mail.id})"></button>
+          <header class="modal-card-head">
+            <p class="modal-card-title">Whitelisten</p>
+            <button class="delete" aria-label="close"></button>
           </header>
           <section class="modal-card-body">
-            <div class="buttons mb-3" id="view-toggle-${mail.id}">
-              <button class="button is-outlined is-link" onclick="toggleView('${mail.id}', 'headers')">Kopfzeilen</button>
-              <button class="button is-outlined is-primary" onclick="toggleView('${mail.id}', 'plain')">Text</button>
-              <button class="button is-outlined is-primary" onclick="toggleView('${mail.id}', 'html')">E-Mail-Inhalt</button>
-              <button class="button is-outlined is-primary" onclick="loadUnsafeHtml(${mail.id}); toggleView('${mail.id}', 'unsafe')">Externe Inhalte anzeigen</button>
-            </div>
-            <pre id="modal-headers-${mail.id}" style="display:none;">${(mail.headers || "").replace(/\r?\n/g, "<br>")}</pre>
-            <pre id="modal-body-${mail.id}" style="display:none;">${mail.body || "(kein Inhalt)"}</pre>
-            <iframe id="modal-html-${mail.id}" style="display:none; width:100%; height:60vh; border:1px solid #ccc;" sandbox="allow-same-origin"></iframe>
+            <p>Möchtest du <strong>nur diese Absenderadresse</strong> whitelisten, oder die <strong>gesamte Domain</strong>${domain ? ` (<code>${dlabel}</code>)` : ""}?</p>
           </section>
-          <footer class="modal-card-foot is-justify-content-space-between is-flex-wrap-wrap">
-            <div class="has-text-left is-size-7">
-              <p><strong>Von:</strong> ${mail.sender || "(unbekannt)"}</p>
-              <p><strong>An:</strong> ${mail.recipient || "(unbekannt)"}</p>
-              <p><strong>Betreff:</strong> ${mail.subject || "(kein Betreff)"}</p>
-            </div>
-            <div class="has-text-right is-flex is-flex-direction-column is-align-items-end">
-              <div class="buttons are-small">
-                <button class="button is-danger is-light" onclick="markSpam(${mail.id}, true)">🔥 Spam</button>
-                <button class="button is-success is-light" onclick="markHam(${mail.id})">✅ Whitelist</button>
-                <button class="button is-warning is-light" onclick="deleteMail(${mail.id})">🗑️ Löschen</button>
-                <button class="button is-link is-light"    onclick="markRead(${mail.id})">🔵 Gelesen</button>
-              </div>
-              <p class="is-size-7 mt-2">${formatGermanDateTime(mail.date)}</p>
-            </div>
+          <footer class="modal-card-foot is-justify-content-flex-end">
+            <button class="button is-link"   data-scope="address">Nur Adresse</button>
+            <button class="button is-warning" data-scope="domain">Domain</button>
+            <button class="button">Abbrechen</button>
           </footer>
         </div>
       </div>`;
-      document.getElementById("modals").innerHTML = modalHTML;
-      toggleView(mail.id, 'html');
+    const c = document.createElement("div");
+    c.innerHTML = html;
+    document.body.appendChild(c);
 
-      const iframe = document.getElementById(`modal-html-${mail.id}`);
-      if (iframe && mail.html_body) { iframe.srcdoc = mail.html_body; iframe.style.display = "block"; }
-      safeHtml[mail.id] = mail.html_body || "<p>(kein HTML-Inhalt)</p>";
-
-      document.addEventListener("keydown", function escListener(evt) {
-        if (evt.key === "Escape") { hideModal(mail.id); document.removeEventListener("keydown", escListener); }
-      });
+    const modal = c.querySelector("#wl-choice");
+    const close = () => { modal.remove(); };
+    modal.querySelector(".delete").onclick = close;
+    modal.querySelector("footer .button:not([data-scope])").onclick = () => { close(); resolve(null); };
+    modal.querySelectorAll("footer .button[data-scope]").forEach(btn => {
+      btn.onclick = () => { const scope = btn.getAttribute("data-scope"); close(); resolve(scope); };
     });
+  });
 }
 
-function hideModal(id) { const m = document.getElementById(`modal-${id}`); if (m) m.remove(); }
+/* Modal laden + öffnen (native <dialog>) */
+function loadModal(id){
+  fetch(`/api/mail?id=${id}`)
+    .then(r => r.json())
+    .then(mail => openMailDialog(mail));
+}
 
-function toggleView(id, type) {
+function openMailDialog(mail){
+  const html = `
+  <dialog id="dlg-${mail.id}" class="mail-dialog">
+    <div class="mail-card">
+      <header class="modal-card-head">
+        <p class="modal-card-title">Mail anzeigen</p>
+        <button class="delete" aria-label="close" onclick="closeMailDialog(${mail.id})"></button>
+      </header>
+
+      <div class="body">
+        <div class="buttons mb-3" id="view-toggle-${mail.id}">
+          <button id="btn-headers-${mail.id}" class="button is-outlined is-link"   onclick="toggleView('${mail.id}', 'headers')">Kopfzeilen</button>
+          <button id="btn-plain-${mail.id}"   class="button is-outlined is-primary" onclick="toggleView('${mail.id}', 'plain')">Text</button>
+          <button id="btn-html-${mail.id}"    class="button is-outlined is-primary" onclick="toggleView('${mail.id}', 'html')">E-Mail-Inhalt</button>
+          <button id="btn-unsafe-${mail.id}"  class="button is-outlined is-primary" onclick="loadUnsafeHtml(${mail.id}); toggleView('${mail.id}', 'unsafe')">Externe Inhalte anzeigen</button>
+        </div>
+
+        <pre id="modal-headers-${mail.id}" style="display:none;">${mail.headers_pretty || "(keine Kopfzeilen verfügbar)"}</pre>
+        <pre id="modal-body-${mail.id}" style="display:none;">${mail.body || "(kein Inhalt)"}</pre>
+        <iframe id="modal-html-${mail.id}" style="display:none; width:100%; height:60vh; border:1px solid #ccc;" sandbox="allow-same-origin"></iframe>
+      </div>
+
+      <footer class="modal-card-foot is-justify-content-space-between is-flex-wrap-wrap">
+        <div class="has-text-left is-size-7">
+          <p><strong>Von:</strong> ${mail.sender || "(unbekannt)"} </p>
+          <p><strong>An:</strong> ${mail.recipient || "(unbekannt)"} </p>
+          <p><strong>Betreff:</strong> ${mail.subject || "(kein Betreff)"} </p>
+        </div>
+        <div class="has-text-right is-flex is-flex-direction-column is-align-items-end">
+          <div class="buttons are-small">
+            <button class="button is-danger is-light" onclick="markSpam(${mail.id}, true)">🔥 Spam</button>
+            <button class="button is-success is-light" onclick="markHam(${mail.id})">✅ Whitelist</button>
+            <button class="button is-warning is-light" onclick="deleteMail(${mail.id})">🗑️ Löschen</button>
+            <button class="button is-link is-light"    onclick="markRead(${mail.id})">🔵 Gelesen</button>
+          </div>
+          <p class="is-size-7 mt-2">${formatGermanDateTime(mail.date)}</p>
+        </div>
+      </footer>
+    </div>
+  </dialog>`;
+
+  const modals = document.getElementById("modals");
+  modals.innerHTML = html;
+
+  /* Zeilennummern rendern */
+  const pre = document.getElementById(`modal-headers-${mail.id}`);
+  if(pre){
+    const lines = pre.textContent.split('\n');
+    pre.innerHTML = lines.map(l => `<span class="line">${l || '&nbsp;'}</span>`).join('');
+  }
+
+  /* Buttons je nach Inhalt zeigen/verstecken + Default-Ansicht setzen */
+  const hasHtml    = !!(mail.html_body && mail.html_body.trim());
+  const hasHtmlRaw = !!(mail.html_raw && mail.html_raw.trim());
+  const hasPlain   = !!(mail.body && mail.body.trim());
+  const hasHeaders = !!(mail.headers_pretty && mail.headers_pretty.trim());
+  const btnHtml    = document.getElementById(`btn-html-${mail.id}`);
+  const btnUnsafe  = document.getElementById(`btn-unsafe-${mail.id}`);
+  const btnPlain   = document.getElementById(`btn-plain-${mail.id}`);
+  const btnHead    = document.getElementById(`btn-headers-${mail.id}`);
+
+  if(!hasHtml)    btnHtml.style.display = "none";
+  if(!hasHtmlRaw) btnUnsafe.style.display = "none";
+  if(!hasPlain)   btnPlain.style.display = "none";
+  if(!hasHeaders) btnHead.style.display = "none";
+
+  const iframe = document.getElementById(`modal-html-${mail.id}`);
+  if(iframe && hasHtml) iframe.srcdoc = mail.html_body;
+
+  let defaultView = hasHtml ? "html" : (hasPlain ? "plain" : "headers");
+  toggleView(mail.id, defaultView);
+
+  /* Dialog öffnen */
+  const dlg = document.getElementById(`dlg-${mail.id}`);
+  dlg.showModal();
+
+  /* Backdrop-Klick schließt */
+  dlg.addEventListener('click', (e) => {
+    if(e.target === dlg) closeMailDialog(mail.id);
+  });
+}
+
+/* Dialog schließen */
+function closeMailDialog(id){
+  const dlg = document.getElementById(`dlg-${id}`);
+  if(dlg && typeof dlg.close === 'function') dlg.close();
+  const host = document.getElementById("modals");
+  if(host) host.innerHTML = "";
+}
+
+/* Ansicht umschalten */
+function toggleView(id, type){
   const headers = document.getElementById(`modal-headers-${id}`);
-  const body = document.getElementById(`modal-body-${id}`);
-  const html = document.getElementById(`modal-html-${id}`);
-  [headers, body, html].forEach(el => { if (el) el.style.display = "none"; });
-  if (type === "headers" && headers) headers.style.display = "block";
-  if (type === "plain"   && body)    body.style.display = "block";
-  if ((type === "html" || type === "unsafe") && html) { html.style.display = "block"; }
+  const body    = document.getElementById(`modal-body-${id}`);
+  const html    = document.getElementById(`modal-html-${id}`);
+  [headers, body, html].forEach(el => { if(el) el.style.display = "none"; });
+  if(type === "headers" && headers) headers.style.display = "block";
+  if(type === "plain"   && body)    body.style.display = "block";
+  if((type === "html" || type === "unsafe") && html) html.style.display = "block";
 
   const group = document.getElementById(`view-toggle-${id}`);
-  if (group) {
+  if(group){
     const buttons = group.querySelectorAll("button");
     const labelMap = { headers:"Kopfzeilen", plain:"Text", html:"E-Mail-Inhalt", unsafe:"Externe Inhalte anzeigen" };
     buttons.forEach(btn => {
@@ -265,37 +416,53 @@ function toggleView(id, type) {
   }
 }
 
-function loadUnsafeHtml(id) {
-  fetch(`/api/mail?id=${id}`, { credentials: "include" })
+/* Unsicheren HTML-Inhalt nachladen */
+function loadUnsafeHtml(id){
+  fetch(`/api/mail?id=${id}`)
     .then(r => r.json())
     .then(mail => {
       const iframe = document.getElementById(`modal-html-${id}`);
-      if (iframe && mail.html_raw) iframe.srcdoc = mail.html_raw;
+      if(iframe && mail.html_raw) iframe.srcdoc = mail.html_raw;
     });
 }
 
-/* ------- Live-Updates ------- */
+/* Live-Updates */
 let socket;
-document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener("DOMContentLoaded", function(){
   fetchMails();
   fetchUnreadCounts();
   setInterval(fetchUnreadCounts, 15000);
 
   socket = io("/", { transports: ["websocket","polling"], timeout: 5000 });
-  socket.on("connect", () => { if (DEBUG) console.log("✅ WebSocket verbunden"); socket.emit("join_account", { account_id: activeAccount }); });
+  socket.on("connect", () => {
+    if(DEBUG) console.log("✅ WebSocket verbunden");
+    socket.emit("join_account", { account_id: activeAccount });
+  });
   socket.on("mail:deleted", () => { fetchMails(); fetchUnreadCounts(); });
   socket.on("mail:read",    () => { fetchMails(); fetchUnreadCounts(); });
   socket.on("mail_received", data => {
-    if (DEBUG) console.log("📬 Neue Mail:", data);
-    if (parseInt(data.account_id) === parseInt(activeAccount)) {
+    if(DEBUG) console.log("📬 Neue Mail:", data);
+    if(parseInt(data.account_id) === parseInt(activeAccount)){
       fetchMails(); fetchUnreadCounts();
-      if (document.hidden && Notification.permission === "granted") {
+      if(document.hidden && Notification.permission === "granted"){
         new Notification("Neue Mail", { body: data.subject || "Neue Nachricht", icon: "/static/icons/mail-notification.png" });
       }
     }
   });
-  socket.on("disconnect", () => { if (DEBUG) console.warn("❌ Socket getrennt"); });
+  socket.on("disconnect", () => { if(DEBUG) console.warn("❌ Socket getrennt"); });
 });
+
+Object.assign(window, {
+  markRead,
+  markSpam,
+  markHam,
+  deleteMail,
+  loadModal,
+  toggleView,
+  loadUnsafeHtml,
+  closeMailDialog
+});
+
 </script>
 <script src="{{ url_for('static', filename='libs/socket.io.min.js') }}"></script>
 {% endblock %}

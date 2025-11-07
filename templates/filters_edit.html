@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% set title = "Filter bearbeiten" %}
+{% block content %}
+<h1 class="title">✏️ Filter bearbeiten</h1>
+<p class="subtitle">Regel für <strong>{{ account_username }}</strong></p>
+
+<form method="post" action="{{ url_for('edit_filter', filter_id=filter.id, account_id=account_id) }}">
+  <div class="columns is-vcentered">
+    <div class="column is-2">
+      <label class="label is-size-7 has-text-grey">Feld</label>
+      <div class="select is-fullwidth">
+        <select name="field" required>
+          <option value="from"     {{ 'selected' if filter.field == 'from' }}>Von</option>
+          <option value="to"       {{ 'selected' if filter.field == 'to' }}>An</option>
+          <option value="subject"  {{ 'selected' if filter.field == 'subject' }}>Betreff</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="column is-2">
+      <label class="label is-size-7 has-text-grey">Modus</label>
+      <div class="select is-fullwidth">
+        <select name="mode" required>
+          <option value="exact"      {{ 'selected' if filter.mode == 'exact' }}>ist genau</option>
+          <option value="contains"   {{ 'selected' if filter.mode == 'contains' }}>enthält</option>
+          <option value="startswith" {{ 'selected' if filter.mode == 'startswith' }}>beginnt mit</option>
+          <option value="endswith"   {{ 'selected' if filter.mode == 'endswith' }}>endet mit</option>
+          <option value="regex"      {{ 'selected' if filter.mode == 'regex' }}>RegEx</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="column">
+      <label class="label is-size-7 has-text-grey">Wert</label>
+      <input class="input" type="text" name="value" value="{{ filter.value }}" required>
+    </div>
+  </div>
+
+  <div class="columns is-vcentered">
+    <div class="column is-3">
+      <label class="label is-size-7 has-text-grey">Zielordner</label>
+      <input class="input" type="text" name="target_folder" value="{{ filter.target_folder or 'INBOX.' }}">
+    </div>
+
+    <div class="column is-2">
+      <label class="checkbox mt-5">
+        <input type="checkbox" name="is_read" {{ 'checked' if filter.is_read else '' }}>
+        Als gelesen markieren
+      </label>
+    </div>
+
+    <div class="column is-2">
+      <label class="checkbox mt-5">
+        <input type="checkbox" name="active" {{ 'checked' if filter.active else '' }}>
+        Aktiv
+      </label>
+    </div>
+  </div>
+
+  <div class="buttons mt-4">
+    <button class="button is-primary">💾 Speichern</button>
+    <a class="button is-light" href="{{ url_for('filters', account=account_id) }}">↩️ Abbrechen</a>
+  </div>
+</form>
+{% endblock %}
